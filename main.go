@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
@@ -33,6 +34,16 @@ var (
 			{0, 1, 0},
 			{0, 1, 0},
 		},
+		{
+			{0, 1, 0},
+			{1, 1, 1},
+			{0, 1, 0},
+		},
+		{
+			{0, 1, 0},
+			{1, 1, 1},
+			{0, 0, 0},
+		},
 	}
 )
 
@@ -63,7 +74,6 @@ func (c *Cube) Rotate(angle int) {
 
 type Game struct {
 	View      [][]int
-	SnapView  [][]int
 	Backgroud [][]int
 	Cube      *Cube
 	Height    int
@@ -87,7 +97,6 @@ func (g *Game) Reset() {
 	for i := range g.Backgroud {
 		clear(g.Backgroud[i])
 		clear(g.View[i])
-		clear(g.SnapView[i])
 	}
 	for i := range g.Backgroud[0] {
 		g.Backgroud[g.Height-3][i] = 1
@@ -137,7 +146,7 @@ func (g *Game) Next() {
 	}
 }
 
-func (g *Game) Drop() {
+func (g *Game) GenernateCube() {
 	g.Cube = g.NextCube
 	g.speed = 500
 	g.Next()
@@ -161,14 +170,14 @@ func (g *Game) SettleScores() int {
 }
 
 func (g *Game) Check() bool {
-	for i := range g.SnapView {
-		copy(g.SnapView[i], g.Backgroud[i])
-	}
 	for i := range g.Cube.Body {
+		y := g.Cube.Y + i
 		for j := range g.Cube.Body[i] {
-			g.SnapView[g.Cube.Y+i][g.Cube.X+j] += g.Cube.Body[i][j]
-			if g.SnapView[g.Cube.Y+i][g.Cube.X+j] > 1 {
-				return false
+			if g.Cube.Body[i][j] == 1 {
+				x := g.Cube.X + j
+				if g.Backgroud[y][x] == 1 {
+					return false
+				}
 			}
 		}
 	}
@@ -204,12 +213,11 @@ func (g *Game) HandleInput(key rune) {
 	case 's':
 		g.speed = 100
 	}
-
 }
 
 func (g *Game) Refresh() {
 	buf := bytes.NewBuffer(nil)
-	fmt.Fprint(buf, "\033[H")
+	buf.WriteString("\033[H")
 	for i := range g.View {
 		copy(g.View[i], g.Backgroud[i])
 	}
@@ -221,34 +229,80 @@ func (g *Game) Refresh() {
 	for i := range g.View[:g.Height] {
 		for j := range g.View[i] {
 			if g.View[i][j] == 0 {
-				fmt.Fprint(buf, "  ")
+				buf.WriteString("  ")
+			} else if g.View[i][j] == 1 {
+				buf.WriteString("██")
 			} else {
-				fmt.Fprint(buf, "██")
+				buf.WriteString("░░")
 			}
 		}
-		fmt.Fprint(buf, "\n")
+		buf.WriteString("\n")
 	}
 
-	fmt.Fprintf(buf, "next: \n")
+	buf.WriteString("next: \n")
 	for i := range g.NextCube.Body {
 		for j := range g.NextCube.Body[i] {
 			if g.NextCube.Body[i][j] == 0 {
-				fmt.Fprint(buf, "  ")
+				buf.WriteString("  ")
 			} else {
-				fmt.Fprint(buf, "██")
+				buf.WriteString("██")
 			}
 		}
-		fmt.Fprint(buf, "\n")
+		buf.WriteString("\n")
 	}
-
-	fmt.Fprintf(buf, "\nscore: %d\n", g.Score)
-
+	buf.WriteString(fmt.Sprintf("\nscore: %d", g.Score))
 	os.Stdout.Write(buf.Bytes())
 }
 func (g *Game) Speed() time.Duration {
 	return time.Millisecond * time.Duration(g.speed)
 }
 
+func (g *Game) GameStart(ctx context.Context) {
+	if err := keyboard.Open(); err != nil {
+		panic(err)
+	}
+	keyChan := make(chan rune)
+	go func() {
+		defer keyboard.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				char, key, _ := keyboard.GetKey()
+				if char != 0 {
+					keyChan <- char
+				}
+				if key == keyboard.KeyCtrlC {
+					return
+				}
+			}
+		}
+	}()
+	for {
+		select {
+		case <-time.Tick(g.Speed()):
+			g.Move(0, 1)
+			if !g.Check() {
+				g.SettleScores()
+				g.Stash()
+				g.GenernateCube()
+				if !g.Check() {
+					g.Refresh()
+					g.GameOver()
+					return
+				}
+			}
+			g.Refresh()
+		case key := <-keyChan:
+			g.HandleInput(key)
+			g.Refresh()
+		case <-ctx.Done():
+			fmt.Println("game exit")
+			return
+		}
+	}
+}
 func NewGame(Height, Width int) *Game {
 	Cube := Cube{
 		Width:  3,
@@ -262,58 +316,21 @@ func NewGame(Height, Width int) *Game {
 		Width:  Width,
 	}
 	game.View = make([][]int, game.Height)
-	game.SnapView = make([][]int, game.Height)
 	game.Backgroud = make([][]int, game.Height)
 	for i := range game.View {
 		game.View[i] = make([]int, game.Width)
-		game.SnapView[i] = make([]int, game.Width)
 		game.Backgroud[i] = make([]int, game.Width)
 	}
 	game.Reset()
 	game.Next()
-	game.Drop()
+	game.GenernateCube()
 	fmt.Print("\033[H\033[2J")
 	return &game
 }
 func main() {
-	if err := keyboard.Open(); err != nil {
-		panic(err)
-	}
-	keyChan := make(chan rune)
-	go func() {
-		defer keyboard.Close()
-		for {
-			char, key, _ := keyboard.GetKey()
-			if char != 0 {
-				keyChan <- char
-			}
-			if key == keyboard.KeyCtrlC {
-				return
-			}
-		}
-	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	game := NewGame(10, 16)
-	for {
-		select {
-		case <-time.Tick(game.Speed()):
-			game.Move(0, 1)
-			if !game.Check() {
-
-				game.SettleScores()
-				game.Stash()
-				game.Drop()
-				if !game.Check() {
-					game.GameOver()
-					return
-				}
-			}
-			game.Refresh()
-
-		case key := <-keyChan:
-			game.HandleInput(key)
-			game.Refresh()
-
-		}
-	}
+	game.GameStart(ctx)
 
 }
