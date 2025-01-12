@@ -3,9 +3,37 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
 	"os"
 	"slices"
 	"time"
+
+	"github.com/eiannone/keyboard"
+)
+
+var (
+	cubes = [][3][3]int{
+		{
+			{1, 1, 1},
+			{0, 1, 0},
+			{0, 1, 0},
+		},
+		{
+			{1, 1, 1},
+			{1, 1, 1},
+			{1, 1, 1},
+		},
+		{
+			{1, 1, 0},
+			{0, 1, 0},
+			{0, 1, 0},
+		},
+		{
+			{0, 1, 0},
+			{0, 1, 0},
+			{0, 1, 0},
+		},
+	}
 )
 
 type Cube struct {
@@ -15,204 +43,277 @@ type Cube struct {
 }
 
 func (c *Cube) Rotate(angle int) {
-	// 创建临时矩阵存储旋转结果
 	temp := [3][3]int{}
-	// 根据角度选择旋转方式
 	switch angle {
-	case 90: // 顺时针旋转90度
+	case 90:
 		for i := range c.Body {
 			for j := range c.Body[i] {
 				temp[j][2-i] = c.Body[i][j]
 			}
 		}
-	case -90: // 逆时针旋转90度
+	case -90:
 		for i := range c.Body {
 			for j := range c.Body[i] {
 				temp[2-j][i] = c.Body[i][j]
 			}
 		}
 	}
-
-	// 将旋转后的结果复制回原矩阵
 	c.Body = temp
 }
 
-type Montior struct {
+type Game struct {
 	View      [][]int
 	SnapView  [][]int
 	Backgroud [][]int
 	Cube      *Cube
 	Height    int
 	Width     int
+	Score     int
+	NextCube  *Cube
+	speed     int
 }
 
-func (m *Montior) Move(dx, dy int) {
-	m.Cube.X += dx
-	m.Cube.Y += dy
-
-}
-func (m *Montior) Clip() {
-	if m.Cube.X < 0 {
-		m.Cube.X = 0
-	}
-	if m.Cube.Y < 0 {
-		m.Cube.Y = 0
-	}
-	if m.Cube.Y+m.Cube.Height > m.Height {
-		m.Cube.Y = m.Height - m.Cube.Height
-	}
-	if m.Cube.X+m.Cube.Width > m.Width {
-		m.Cube.X = m.Width - m.Cube.Width
-	}
+func (g *Game) Move(dx, dy int) {
+	g.Cube.X += dx
+	g.Cube.Y += dy
+	g.Clip()
 }
 
-func (m *Montior) MoveAbsolute(x, y int) {
-	m.Cube.X = x
-	m.Cube.Y = y
-	m.Clip()
+func (g *Game) Reset() {
+	g.Score = 0
+	g.Cube.X = 0
+	g.Cube.Y = 0
+	g.speed = 500
+	for i := range g.Backgroud {
+		clear(g.Backgroud[i])
+		clear(g.View[i])
+		clear(g.SnapView[i])
+	}
+	for i := range g.Backgroud[0] {
+		g.Backgroud[g.Height-3][i] = 1
+		g.Backgroud[g.Height-2][i] = 1
+		g.Backgroud[g.Height-1][i] = 1
+	}
+	for i := range g.Backgroud {
+		g.Backgroud[i][0] = 1
+		g.Backgroud[i][1] = 1
+		g.Backgroud[i][g.Width-1] = 1
+		g.Backgroud[i][g.Width-2] = 1
+	}
 }
 
-func (m *Montior) RemoveFullLine() {
-	row := m.Height - 2
+func (g *Game) Clip() {
+	if g.Cube.X < 0 {
+		g.Cube.X = 0
+	}
+	if g.Cube.Y < 0 {
+		g.Cube.Y = 0
+	}
+	if g.Cube.Y+g.Cube.Height > g.Height {
+		g.Cube.Y = g.Height - g.Cube.Height
+	}
+	if g.Cube.X+g.Cube.Width > g.Width {
+		g.Cube.X = g.Width - g.Cube.Width
+	}
+}
+func (g *Game) MoveAbs(x, y int) {
+	g.Cube.X = x
+	g.Cube.Y = y
+	g.Clip()
+}
+
+func (g *Game) Next() {
+	g.NextCube = &Cube{
+		Body:   cubes[rand.Intn(len(cubes))],
+		X:      g.Width / 2,
+		Y:      0,
+		Width:  3,
+		Height: 3,
+	}
+	if v := rand.Intn(3); v == 0 {
+		g.NextCube.Rotate(90)
+	} else if v == 1 {
+		g.NextCube.Rotate(-90)
+	}
+}
+
+func (g *Game) Drop() {
+	g.Cube = g.NextCube
+	g.speed = 500
+	g.Next()
+}
+
+func (g *Game) SettleScores() int {
+	row := g.Height - 4
 	for {
-		if !slices.Contains(m.View[row], 0) {
+		if !slices.Contains(g.View[row], 0) {
 			for r := row; r > 0; r-- {
-				copy(m.View[r], m.View[r-1])
+				copy(g.View[r], g.View[r-1])
 			}
+			g.Score++
 		} else {
 			row--
 			if row < 0 {
-				return
+				return g.Score
 			}
 		}
 	}
 }
 
-func (m *Montior) Check() bool {
-	for i := range m.SnapView {
-		copy(m.SnapView[i], m.Backgroud[i])
+func (g *Game) Check() bool {
+	for i := range g.SnapView {
+		copy(g.SnapView[i], g.Backgroud[i])
 	}
-	for i := range m.Cube.Body {
-		for j := range m.Cube.Body[i] {
-			m.SnapView[m.Cube.Y+i][m.Cube.X+j] += m.Cube.Body[i][j]
-			if m.SnapView[m.Cube.Y+i][m.Cube.X+j] > 1 {
+	for i := range g.Cube.Body {
+		for j := range g.Cube.Body[i] {
+			g.SnapView[g.Cube.Y+i][g.Cube.X+j] += g.Cube.Body[i][j]
+			if g.SnapView[g.Cube.Y+i][g.Cube.X+j] > 1 {
 				return false
 			}
 		}
 	}
 	return true
 }
-func (m *Montior) Stash() {
-	for i := range m.Backgroud {
-		copy(m.Backgroud[i], m.View[i])
+
+func (g *Game) GameOver() {
+
+}
+func (g *Game) Stash() {
+	for i := range g.Backgroud {
+		copy(g.Backgroud[i], g.View[i])
 	}
 }
 
-func (m *Montior) Refresh() {
+func (g *Game) HandleInput(key rune) {
+	switch key {
+	case 'a':
+		g.Move(-1, 0)
+		if !g.Check() {
+			g.Move(1, 0)
+		}
+	case 'd':
+		g.Move(1, 0)
+		if !g.Check() {
+			g.Move(-1, 0)
+		}
+	case 'w':
+		g.Cube.Rotate(90)
+		if !g.Check() {
+			g.Cube.Rotate(-90)
+		}
+	case 's':
+		g.speed = 100
+	}
+
+}
+
+func (g *Game) Refresh() {
 	buf := bytes.NewBuffer(nil)
 	fmt.Fprint(buf, "\033[H")
-	for i := range m.View {
-		copy(m.View[i], m.Backgroud[i])
+	for i := range g.View {
+		copy(g.View[i], g.Backgroud[i])
 	}
-	for i := range m.Cube.Body {
-		for j := range m.Cube.Body[i] {
-			m.View[m.Cube.Y+i][m.Cube.X+j] = m.Cube.Body[i][j]
+	for i := range g.Cube.Body {
+		for j := range g.Cube.Body[i] {
+			g.View[g.Cube.Y+i][g.Cube.X+j] += g.Cube.Body[i][j]
 		}
 	}
-	for i := range m.View[:m.Height-1] {
-		for j := range m.View[i] {
-			fmt.Fprint(buf, m.View[i][j])
+	for i := range g.View[:g.Height] {
+		for j := range g.View[i] {
+			if g.View[i][j] == 0 {
+				fmt.Fprint(buf, "  ")
+			} else {
+				fmt.Fprint(buf, "██")
+			}
 		}
 		fmt.Fprint(buf, "\n")
 	}
+
+	fmt.Fprintf(buf, "next: \n")
+	for i := range g.NextCube.Body {
+		for j := range g.NextCube.Body[i] {
+			if g.NextCube.Body[i][j] == 0 {
+				fmt.Fprint(buf, "  ")
+			} else {
+				fmt.Fprint(buf, "██")
+			}
+		}
+		fmt.Fprint(buf, "\n")
+	}
+
+	fmt.Fprintf(buf, "\nscore: %d\n", g.Score)
+
 	os.Stdout.Write(buf.Bytes())
 }
+func (g *Game) Speed() time.Duration {
+	return time.Millisecond * time.Duration(g.speed)
+}
 
-func NewGame(Height, Width int) *Montior {
+func NewGame(Height, Width int) *Game {
 	Cube := Cube{
-		Body: [3][3]int{
-			{0, 0, 0},
-			{1, 1, 1},
-			{1, 1, 1},
-		},
-		X:      0,
-		Y:      0,
 		Width:  3,
 		Height: 3,
 	}
-	Monitor := Montior{
+	Height += 3
+	Width += 6
+	game := Game{
 		Cube:   &Cube,
 		Height: Height,
 		Width:  Width,
 	}
-	Monitor.View = make([][]int, Height)
-	Monitor.SnapView = make([][]int, Height)
-	Monitor.Backgroud = make([][]int, Height)
-	for i := range Monitor.View {
-		Monitor.View[i] = make([]int, Width)
-		Monitor.SnapView[i] = make([]int, Width)
-		Monitor.Backgroud[i] = make([]int, Width)
+	game.View = make([][]int, game.Height)
+	game.SnapView = make([][]int, game.Height)
+	game.Backgroud = make([][]int, game.Height)
+	for i := range game.View {
+		game.View[i] = make([]int, game.Width)
+		game.SnapView[i] = make([]int, game.Width)
+		game.Backgroud[i] = make([]int, game.Width)
 	}
-	for i := range Monitor.Backgroud[0] {
-		Monitor.Backgroud[Monitor.Height-1][i] = 1
-	}
-	return &Monitor
+	game.Reset()
+	game.Next()
+	game.Drop()
+	fmt.Print("\033[H\033[2J")
+	return &game
 }
 func main() {
-	// if err := keyboard.Open(); err != nil {
-	// 	panic(err)
-	// }
-	// defer keyboard.Close()
-	// keyChan := make(chan keyboard.Key)
-	// go func() {
-	// 	for {
-	// 		char, key, err := keyboard.GetKey()
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 		if key != 0 {
-	// 			keyChan <- key
-	// 		} else {
-	// 			keyChan <- keyboard.Key(char)
-	// 		}
-	// 	}
-	// }()
-
-	Monitor := NewGame(10, 3)
-	for i := 0; i < 100; i++ {
+	if err := keyboard.Open(); err != nil {
+		panic(err)
+	}
+	keyChan := make(chan rune)
+	go func() {
+		defer keyboard.Close()
+		for {
+			char, key, _ := keyboard.GetKey()
+			if char != 0 {
+				keyChan <- char
+			}
+			if key == keyboard.KeyCtrlC {
+				return
+			}
+		}
+	}()
+	game := NewGame(10, 16)
+	for {
 		select {
-		// case key := <-keyChan:
-		// 	switch key {
-		// 	case keyboard.KeyArrowLeft:
-		// 		Monitor.Move(-1, 0)
-		// 		if !Monitor.Check() {
-		// 			Monitor.Move(1, 0)
-		// 		}
-		// 	case keyboard.KeyArrowRight:
-		// 		Monitor.Move(1, 0)
-		// 		if !Monitor.Check() {
-		// 			Monitor.Move(-1, 0)
-		// 		}
-		// 	case keyboard.KeyArrowUp:
-		// 		Monitor.Cube.Rotate(90)
-		// 		if !Monitor.Check() {
-		// 			Monitor.Cube.Rotate(-90)
-		// 		}
-		// 	}
-		default:
-			Monitor.Move(0, 1)
-			if !Monitor.Check() {
-				Monitor.RemoveFullLine()
-				Monitor.Stash()
+		case <-time.Tick(game.Speed()):
+			game.Move(0, 1)
+			if !game.Check() {
 
-				Monitor.MoveAbsolute(0, 0)
-				if !Monitor.Check() {
-
+				game.SettleScores()
+				game.Stash()
+				game.Drop()
+				if !game.Check() {
+					game.GameOver()
 					return
 				}
 			}
+			game.Refresh()
+
+		case key := <-keyChan:
+			game.HandleInput(key)
+			game.Refresh()
+
 		}
-		Monitor.Refresh()
-		time.Sleep(time.Millisecond * 500)
 	}
+
 }
