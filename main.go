@@ -174,8 +174,7 @@ func (g *Game) Check() bool {
 		y := g.Cube.Y + i
 		for j := range g.Cube.Body[i] {
 			if g.Cube.Body[i][j] == 1 {
-				x := g.Cube.X + j
-				if g.Backgroud[y][x] == 1 {
+				if g.Backgroud[y][g.Cube.X+j] == 1 {
 					return false
 				}
 			}
@@ -250,7 +249,7 @@ func (g *Game) Refresh() {
 		}
 		buf.WriteString("\n")
 	}
-	buf.WriteString(fmt.Sprintf("\nscore: %d", g.Score))
+	buf.WriteString(fmt.Sprintf("\nscore: %d \n", g.Score))
 	os.Stdout.Write(buf.Bytes())
 }
 func (g *Game) Speed() time.Duration {
@@ -278,6 +277,11 @@ func (g *Game) GameStart(ctx context.Context) {
 				}
 			}
 		}
+	}()
+	defer func() {
+		fmt.Print("\033[?25h") // 显示光标
+		fmt.Print("\033[0m")   // 重置所有属性
+		keyboard.Close()
 	}()
 	for {
 		select {
@@ -330,7 +334,7 @@ func NewGame(Height, Width int) *Game {
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	game := NewGame(10, 16)
+	game := NewGame(16, 16)
 	game.GameStart(ctx)
 
 }
