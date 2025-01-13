@@ -2,6 +2,10 @@
 
 
 go run main.go
+
+## 运行截图
+![demo](https://github.com/xjxkeep/cube/blob/main/image/demo.jpg)
+
 ```
 ████                                    ████
 ████                                    ████
